@@ -1,0 +1,307 @@
+This code was written by youssef okab for embedded software assignment 3 showing freeRTOS process for tasks 1-6
+#include <Arduino.h>
+#include <stdio.h>
+//#include <Arduino_FreeRTOS.h>
+//#include <queue.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+//#include "task.h"
+#include "freertos/semphr.h"
+#define LED_ON  1
+#define LED_OFF 0
+//#define BT1 5
+#define portMAX_DELAY (TickType_t)  0xffffffffUL //defines the maximum delay value that can be passed as a parameter to a function
+#define DEBOUNCE_DELAY_MS 50
+//struct frequency_values frequencies = {0,0};
+//SemaphoreHandle_t frequency_semaphore;
+SemaphoreHandle_t frequency_semaphore = xSemaphoreCreateMutex();//creates a mutex semaphore object named 'frequency_semaphore' using the FreeRTOS API function 
+
+
+// Pin definitions
+const uint8_t Task1_PIN = 18; //defining Task1_pin as 18
+const uint8_t Task2_PIN = 2;  //defining Task2_pin as 2
+const uint8_t Task3_PIN = 3; //defining Task3_pin as 3
+const uint8_t Task4_PIN = 19; //defining Task4_pin as 19
+const uint8_t Task6_PIN = 1; //defining task6_pin as 1
+const uint8_t BT1 = 5 ;// defining the push button pin as 5
+//unsigned long iterations = pdMS_TO_TICKS(millis);
+
+QueueHandle_t xQueue; // creating the handle xQueue
+const uint16_t maximum_analogue = 1023; // analogue input settings
+
+// Task 1 settings
+const uint32_t TASK1_period = 4; //4ms
+uint8_t task1_state = 0; //defining the task1 phase state
+uint32_t task1_previous_cycle = 0; //defining the last task 1 cycle variable
+
+// Task 2 settings
+const uint32_t TASK2_period = 20; //20ms
+const uint32_t TASK2_minimumfrequency = 333; //defining the minimumfrequency as 333 Hz
+const uint32_t TASK2_maximumfrequency= 1000; // defining the maximumfrequency as 1000 Hz
+uint32_t task2_previous_cycle = 0; //setting up the last task 2 cycle variable
+uint32_t task2_frequency = 0;// setting up the task2_frequency variable
+
+// Task 3 settings
+const uint32_t TASK3_period = 8; //8ms
+const uint32_t TASK3_minimumfrequency = 500; //defining the minimumfrequency as 500 Hz
+const uint32_t TASK3_maximumfrequency = 1000; // setting up the maximumfrequency as 1000 Hz
+uint32_t task3_previous_cycle = 0; //setting up the last task 3 cycle
+uint32_t task3_frequency = 0; // setting up the task3_frequency variable
+
+
+// Task 4 settings
+const uint32_t TASK4_period = 20; //20ms
+const float TASK4_maximum_voltage = 3.3; //task 4 maximum voltage is at 3.3v
+const uint8_t TASK4_last_readings = 4; //clarifying that there are 4 readings tha will be read
+uint32_t task4_previous_cycle = 0;//defining the last taskt 4 cycle
+uint8_t task4_index = 0; //initializing the task4_index variable
+float task4_readings[TASK4_last_readings]; //read the last 4 readings
+float task4_filtered_value = 0; //including the task4_filtered value in the scope
+bool task4_error = false; //defining intial task4_error as false
+float analogue_variable_filter = 0; // including the analogue_variable_filter in the scope
+int total_analogue = 0; // the total sum of the last 4 analogue readings
+int analogue_array_list[4]; // array to hold the last 4 analogue readings
+int analogue_array_index = 0; // index for analogue_readings array
+int BT1_state = 0;
+// Task 5 settings
+const uint32_t TASK5_period = 100; //100ms
+const uint32_t TASK5_minimumfrequency = 0; //defining task_5_minimumfrequency
+const uint32_t TASK5_maximumfrequency = 99; //defining task_5_maximumfrequency
+uint32_t task5_previous_cycle = 0; //setting up the last task 5 cycle
+// setting up the Task function parameters
+void task1_function(void *pvParameters);
+void task2_function(void *pvParameters);
+void task3_function(void *pvParameters);
+void task4_function(void *pvParameters);
+void task5_function(void *pvParameters);
+void task6_function(void *pvParameters);
+
+int led_state = LED_OFF;
+
+void setup() {
+  Serial.begin(115200);
+  xQueue = xQueueCreate(6,sizeof(int)); //creating a queue size of 6 variables
+  pinMode(Task1_PIN, OUTPUT);// setting up TASK1_PIN as output
+  pinMode(Task2_PIN, INPUT);//setting up TASK2_PIN as input
+  pinMode(Task3_PIN, INPUT);// setting up TASK3_PIN
+  pinMode(Task4_PIN, OUTPUT);// setting up TASK4_PIN as output
+  pinMode(BT1, INPUT);//setting the push button as input 
+  pinMode(Task6_PIN, OUTPUT); // setting the led light for the push button as output 
+  // creates 6 tasks for the freeRTOS to schedule while adjusting the priorities to match the schedule
+  xTaskCreate(task1_function, "Task 1", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 0, NULL);
+  xTaskCreate(task2_function, "Task 2", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+  xTaskCreate(task3_function, "Task 3", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+  xTaskCreate(task4_function, "Task 4", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 4, NULL);
+  xTaskCreate(task5_function, "Task 5", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 5, NULL);
+  xTaskCreate(task6_function, "Task 6", 2000, NULL, configMAX_PRIORITIES - 6, NULL);
+  // Start scheduler
+  vTaskStartScheduler();  
+}
+
+
+void loop() { 
+   // Create tasks
+    
+    // Should never reach here
+}
+
+
+void task1_function(void *pvParameters) {
+  //unsigned int t1 = micros();
+   while (1) {
+    xSemaphoreTake(frequency_semaphore, portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+    printf("Task 1 running...\n");
+    task1_previous_cycle = millis();
+    digitalWrite( Task1_PIN, HIGH);
+    delayMicroseconds(200);// 200 ms
+    digitalWrite( Task1_PIN, LOW);
+    delayMicroseconds(50);// 50 ms
+    digitalWrite( Task1_PIN, HIGH);
+    delayMicroseconds(30);//30 ms
+    digitalWrite( Task1_PIN, LOW);
+
+    xSemaphoreGive(frequency_semaphore); // gives the 'frequency_semaphore' semaphore
+    vTaskDelay(pdMS_TO_TICKS(TASK1_period));// set the delay for the task at 4ms, while converting ms to ticks
+   }
+   
+  }
+
+
+void task2_function(void *pvParameters) {
+ while (1) {
+  //unsigned int t1 = micros();
+  xSemaphoreTake(frequency_semaphore,portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+  printf("Task 2 running...\n");
+  int analogue_input = analogRead(Task2_PIN);
+
+  if (millis() - task2_previous_cycle >= TASK2_period) {// if milles - task2_previous_cycle is bigger than task2_period
+    
+    task2_previous_cycle = millis(); //then millies is equal to task2_previous cycle
+    uint32_t start_time = micros();//start time is at micros
+    while (micros() - start_time < 1000000) {//micros - start is less than 1000000
+     unsigned int pulseduration = pulseIn(Task2_PIN,HIGH,3);//the pulsein function is used on TASK2_PIN, high and the time wait block is 3 ms
+      if (pulseduration == 0){ //if pulseduration is equal to zero 
+          task2_frequency = 0;// then task2_frequency is equal to zero
+      }
+      else if (pulseduration > 0){//if pulse duration is bigger than zero
+          task2_frequency= 1000000/2*pulseduration;// 1000000 divided by 2*pulseduration
+      }
+    }
+    
+    if (task2_frequency > TASK2_maximumfrequency) {//if task2_frequency is bigger than TASK2_maximumfrequency
+      task2_frequency = TASK2_maximumfrequency; //task2_frequency = TASK2_maximumfrequency
+    }
+    else if (task2_frequency < TASK2_minimumfrequency) {//task2_frequency is smaller than TASK2_minimumfrequency
+      task2_frequency = TASK2_minimumfrequency;//task2_frequency = TASK2_minimumfrequency
+    }
+  
+
+   Serial.println(task2_frequency);
+   
+  
+  
+}  
+  xSemaphoreGive(frequency_semaphore);// gives the 'frequency_semaphore' semaphore
+  vTaskDelay(pdMS_TO_TICKS(TASK2_period));// set the delay for the task at 20ms, while converting ms to ticks
+} 
+
+
+}
+  
+  
+
+void task3_function(void *pvParameters) {
+ while (1) {
+  //unsigned int t1 = micros();
+  xSemaphoreTake(frequency_semaphore, portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+
+  printf("Task 3 running...\n");
+
+  int analogue_input = analogRead(Task3_PIN);
+
+  if ( millis() - task3_previous_cycle >= TASK3_period) {// if milles - task2_previous_cycle is bigger than task2_period
+    
+    task3_previous_cycle = millis();//then millies is equal to task2_previous cycle
+    //uint32_t count = 0;
+    uint32_t start_time = micros();//start time is at micros
+    while (micros() - start_time < 400000) {//micros - start is less than 400000
+    unsigned int pulseduration = pulseIn(Task3_PIN,HIGH,3);//pulseIn function for Task3_PIN,HIGH and a time wait block is 3 ms
+      if (pulseduration == 0){ //pulseduration is equal to zero
+          task3_frequency = 0; //then task3_frequency is equal to zero
+      }
+      else if (pulseduration > 0){//if pulseduration is bigger than zero
+          task3_frequency= 400000/2*pulseduration;//task3_frequency is equal to 400000/2*pulseduration 
+      }
+    if (task3_frequency > TASK3_maximumfrequency) {//if task3_frequency is bigger than TASK3_maximumfrequency
+      task3_frequency = TASK3_maximumfrequency;//task3_frequency is equal to TASK3_maximumfrequency
+    }
+    else if (task3_frequency < TASK3_minimumfrequency) { //if task3_frequency is smaller than TASK3_maximumfrequency
+      task3_frequency = TASK3_minimumfrequency; //task3_frequency = TASK3_minimumfrequency
+    }
+  }
+
+     Serial.println(task3_frequency);
+
+  
+  }
+  xSemaphoreGive(frequency_semaphore); // gives the 'frequency_semaphore' semaphore
+  vTaskDelay(pdMS_TO_TICKS(TASK3_period));// set the delay to 8 ms, , while converting ms to ticks
+  }
+  
+  }
+void task4_function(void *pvParameters) {
+  //unsigned int t1 = micros();
+ //int *analogue_array_list = (int*)malloc(TASK4_last_readings * sizeof(int));
+ //float *task4_readings = (float*)malloc(TASK4_last_readings * sizeof(float));
+ while (1) {
+    xSemaphoreTake(frequency_semaphore, portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+    
+    printf("Task 4 running...\n");
+
+  //if (millis() - task4_previous_cycle >= TASK4_period) {
+    task4_previous_cycle = millis();
+    // Read the analogue input
+    total_analogue -= analogue_array_list[analogue_array_index];//make an array list of the last 4 analogue_array_index readings
+    analogue_array_list[analogue_array_index] = analogRead(Task4_PIN);//get the values from the TASK4_PIN
+    total_analogue += analogue_array_list[analogue_array_index]; // the total sum of all 4 readings
+
+    // Calculate the filtered value
+    task4_readings[task4_index] = total_analogue / (TASK4_last_readings * 1.0); //the total analogue divided by the number of readings
+    task4_index = (task4_index + 1) % TASK4_last_readings; //This line updates the task4_index variable to the next position in the task4_readings array. The % operator is the modulus operator, which ensures that the index wraps around to 0 when it reaches the end of the array. Essentially, this line cycles through the array positions.
+    task4_filtered_value = 0;//line resets the task4_filtered_value variable to 0. This is necessary because we will be adding up the readings from the task4_readings array again in the next loop.
+    for (int i = 0; i < TASK4_last_readings; i++) {//loop calculates the sum of all the readings in the task4_readings array. It iterates through the array positions and adds up the values of each reading. The resulting sum is stored in the task4_filtered_value variable.
+      task4_filtered_value += task4_readings[i];
+    }
+    task4_filtered_value /= TASK4_last_readings;// devide the the task 4 filtered values
+    task4_filtered_value = (task4_filtered_value / maximum_analogue) * TASK4_maximum_voltage; //the task4_filtered_value divided by the maximum analogue times the maximum voltage
+
+    // Visualize an error if the filtered value is greater than half of maximum range
+    if (task4_filtered_value > TASK4_maximum_voltage / 2) { //if the task4_filtered_value is bigger than the task_4_maximum_voltage
+      task4_error = true;// there is an error
+      digitalWrite( Task4_PIN, HIGH);//task4_PIN is high
+    } else {
+      task4_error = false; //there is no error
+      digitalWrite( Task4_PIN, LOW);//task4_pin is low
+    }
+    xSemaphoreGive(frequency_semaphore);// gives the 'frequency_semaphore' semaphore
+    vTaskDelay(pdMS_TO_TICKS(TASK4_period));// set the delay at 20ms , while converting ms to ticks
+ }
+  
+
+}
+void task5_function(void *pvParameters) {
+  while (1) {
+    xSemaphoreTake(frequency_semaphore, portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+
+    printf("Task 5 running...\n");
+    task5_previous_cycle = millis();
+    int scaled_freq_task2 = map(task2_frequency, TASK2_minimumfrequency, TASK2_maximumfrequency, TASK5_minimumfrequency, TASK5_maximumfrequency);//scaling the task2_frequency, TASK2_minimumfrequency, TASK2_maximumfrequency between 0 and 99
+    int scaled_freq_task3 = map(task3_frequency, TASK3_minimumfrequency, TASK3_maximumfrequency, TASK5_minimumfrequency, TASK5_maximumfrequency);//scaling the task3_frequency, TASK3_minimumfrequency, TASK3_maximumfrequency between 0 and 99
+    Serial.println(scaled_freq_task2);
+    Serial.println(scaled_freq_task3);
+    xSemaphoreGive(frequency_semaphore);// gives the 'frequency_semaphore' semaphore
+    vTaskDelay(pdMS_TO_TICKS(TASK5_period)); //set the delay at 100ms, while converting ms to ticks
+  }
+  
+
+  
+}
+void task6_function(void *pvParameters) {
+  while (1) {
+  xSemaphoreTake(frequency_semaphore, portMAX_DELAY);// takes the 'frequency_semaphore' semaphore and specifies a maximum amount of time that the task will wait for the semaphore to become available.
+  printf("Task 6 running...\n");
+  // Initialize variables for button debouncing
+  
+  static bool prevButtonState = LOW;
+  static unsigned long debounceTime = 0;
+  
+
+  bool buttonState = digitalRead(BT1);// Read the current state of the button
+  if (buttonState != prevButtonState) {  // Check if the button state has changed
+
+    debounceTime = millis();
+  }
+    if (digitalRead(BT1) == HIGH && prevButtonState == LOW){ // If the button is pressed, toggle the BT1_state variable
+
+      BT1_state = !BT1_state;
+    }
+    prevButtonState = digitalRead(BT1);  // Update the previous button state variable
+
+      
+    printf("button state is %d\n", BT1_state);
+      
+      if (BT1_state == 1){    // If the button is pressed, blink the LED connected to Task6_PIN
+
+        digitalWrite(Task6_PIN, HIGH);
+          delayMicroseconds(300);//300 ms
+        digitalWrite(Task6_PIN, LOW);
+      }
+      else if (BT1_state == 0) {  // If the button is not pressed, turn off the LED
+
+        digitalWrite(Task6_PIN, LOW);
+      }
+      xSemaphoreGive(frequency_semaphore);// gives the 'frequency_semaphore' semaphore
+      
+    }
+      vTaskDelay(pdMS_TO_TICKS(15));//set the delay at 15ms, while converting ms to ticks
+  }
